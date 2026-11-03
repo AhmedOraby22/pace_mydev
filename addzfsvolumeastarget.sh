@@ -34,8 +34,11 @@ targetcli ls iscsi/ | grep ".$ipdom:data" &>/dev/null
 if [ $? -ne 0 ]; then
  targetcli iscsi/ create iqn.2016-03.com.${ipdom}:data &>/dev/null
 fi
-pdisk=`targetcli ls backstores/block`
-echo $pdisk | grep $disk 
+pdisk=`targetcli ls backstores/block 1 | awk '{print $2}'`
+# a zvol exported as a cluster disk (<disk>-<host>, made by an older disk exporter) holds the zvol: remove it
+echo "$pdisk" | grep -qx "${disk}-${myhost}" && targetcli backstores/block delete ${disk}-${myhost}
+# the exact backstore name: 'grep $disk' also matched zd1 in zd16-... or zd0 in zd0-<host> and the volume got no LUN
+echo "$pdisk" | grep -qx "$diskids"
 if [ $? -ne 0 ];
 then 
  targetcli backstores/block create $diskids /dev/$disk
