@@ -139,12 +139,7 @@ def hostfound(host, hostip):
                 put(etcd, 'known/'+host, hostip)
                 put(etcd, 'running/'+host, hostip)
                 put(etcd, 'host/'+host, hostip)
-                cmdline='/pace/hostfound.sh '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+host+' '+hostip
-                try:
-                        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-                except Exception as e:
-                        with open('/root/heartproblem','a') as f:
-                                f.write('recovery-script-failed: '+str(e)+'\n')
+                # no /pace/hostfound.sh exists (never did): the returning node's own docker_setup.sh republishes its ready/ key and syncs it
 def heartbeat(*args):
     global etcd, leader ,leaderip, myhost, myhostip
     cmdline='docker exec etcdclient /TopStor/etcdgetlocal.py leader'
@@ -179,7 +174,8 @@ def heartbeat(*args):
         knownsn = len(knowns)
         if tries < 10: 
            hostlost(leader, leaderip)
-
+        elif myhost == leader:
+           leadernextlead(knowns)
 
         # Recovery: ActivePartners that are NOT in knowns were hostlost'd earlier.
         # Nmap them and re-publish membership keys if they're reachable again.
@@ -197,10 +193,6 @@ def heartbeat(*args):
                     hostfound(phost, pip)
         except Exception:
             pass
-
-        elif myhost == leader:
-           leadernextlead(knowns)
- 92fb4d3b2c8a4f6460633396a041ff8967de3f33
         for known in knowns:
             host = known[0].split('/')[1]
             if host == myhost:
