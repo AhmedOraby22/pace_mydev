@@ -60,10 +60,14 @@ def thread_del(username,syncip, pullsync='pullavail'):
  global allusers
  if  'NoUser' == username:
   return
- if username not in str(allusers) and 'admin' != username:
+ # exact names (test 614): 'q015a' in str(allusers) was true while only q015a1 / xq015a were left, and
+ # dels(syncip,'user','q015a') deleted every user* key whose key or value contains the text (usersinfo/q015a1,
+ # usershash/q015a10, usersigroup/q015ag, usersigroup/Everyone) from this node's etcd
+ if 'usersinfo/'+username not in [ str(u[0]) for u in allusers if isinstance(u,(tuple,list)) ] and 'admin' != username:
   cmdline=['/TopStor/UnixDelUser',leaderip, username,'system',pullsync]
   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
-  dels(syncip,'user',username)
+  dels(syncip,'usersinfo/'+username)
+  dels(syncip,'usershash/'+username)
 
 def usersyncall(tosync='pullavail'):
  global allusers, leader ,leaderip, myhost, myhostip,pport
@@ -136,13 +140,28 @@ def oneusersync(oper,usertosync,tosync='pullavail'):
     syncip = myhostip
  
  if oper == 'Add':
+    # the user with EXACTLY this name (a filter argument matches any text of a key/value pair: adding q015a
+    # could take usersinfo/aq015a, whatever comes first)
     if 'pullsync' in tosync:
-        user=getnoport(leaderip,pport,'usersinfo', usertosync)[0]
+        users=getnoport(leaderip,pport,'usersinfo/'+usertosync, '--prefix')
     else:
-        user=get(leaderip,'usersinfo', usertosync)[0]
-    thread_add(user,syncip,tosync)
+        users=get(leaderip,'usersinfo/'+usertosync, '--prefix')
+    user=[ u for u in users if isinstance(u,(tuple,list)) and u[0] == 'usersinfo/'+usertosync ]
+    if len(user) == 0:
+        print('oneusersync: no user',usertosync,'on the leader')
+        return
+    thread_add(user[0],syncip,tosync)
  else:
     user = usertosync
+    # the users of the leader NOW (allusers was the list of the last full sync of this long running process: it still
+    # held the user being deleted, so the delete was skipped on this node)
+    try:
+     if 'pullsync' in tosync:
+        allusers=getnoport(leaderip,pport,'usersinfo','--prefix')
+     else:
+        allusers=get(leaderip,'usersinfo','--prefix')
+    except Exception as e:
+     print('oneusersync: cannot read the users of the leader', e)
     thread_del(user,syncip,tosync)
  
   

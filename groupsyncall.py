@@ -43,7 +43,8 @@ def thread_del(username,pullsync='pullavail'):
  if 'Everyone' == username:
   return
  print(username)
- if username not in str(allusers):
+ # exact group names (test 614): 'q015ag' in str(allusers) was also true for a member or a group named q015ag2
+ if 'usersigroup/'+username not in [ str(g[0]) for g in allusers if isinstance(g,(tuple,list)) ]:
   print(username,str(allusers))
   cmdline=['/TopStor/UnixDelGroup',leaderip, username,'system',pullsync]
   result=subprocess.run(cmdline,stdout=subprocess.PIPE)
@@ -84,13 +85,27 @@ def onegroupsync(oper,usertosync,tosync='pullavail'):
  else:
     syncip = myhostip
  if oper == 'Add':
+    # the group with EXACTLY this name: get(leaderip,'usersigroup',name)[0] was the first key/value pair whose text
+    # contains the name (usersigroup/Everyone holds every user name; q015a also matched q015ag), so a wrong group was made
     if 'pullsync' in tosync:
-        user=getnoport(leaderip, pport, 'usersigroup', usertosync)[0]
+        groups=getnoport(leaderip, pport, 'usersigroup/'+usertosync, '--prefix')
     else:
-        user=get(leaderip,'usersigroup', usertosync)[0]
-    thread_add(user,syncip)
+        groups=get(leaderip,'usersigroup/'+usertosync, '--prefix')
+    user=[ g for g in groups if isinstance(g,(tuple,list)) and g[0] == 'usersigroup/'+usertosync ]
+    if len(user) == 0:
+        print('onegroupsync: no group',usertosync,'on the leader')
+        return
+    thread_add(user[0],syncip)
  else:
     user = usertosync
+    # the groups of the leader NOW (allusers of the last full sync may still hold the deleted group)
+    try:
+     if 'pullsync' in tosync:
+        allusers=getnoport(leaderip,pport,'usersigroup','--prefix')
+     else:
+        allusers=get(leaderip,'usersigroup','--prefix')
+    except Exception as e:
+     print('onegroupsync: cannot read the groups of the leader', e)
     thread_del(user,tosync)
     
  
