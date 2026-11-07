@@ -56,6 +56,7 @@ def signal_reboot_via_etcd(etcd_endpoint, myhost, reason):
         print(f"[checksyncs] WARNING: failed to write {key}={reason} to {etcd_endpoint}: {exc}")
 
 software = 'na'
+usrchangeretry = 300   # seconds a follower keeps a UsrChange whose group is not there yet (UnixChangeUser exit 3)
 def reqorder(item):
  """Order of a pending sync request = the time it was filed, in integer nanoseconds.
  The value of a request is <kind>_<name>_<stamp> (user_usr1_<ns>, group_grp1_<ns>) or <kind>_<stamp> (UsrChange_<ns>,
@@ -533,7 +534,19 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
        elif sync in ['UsrChange', 'GrpChange']:
         cmdline = '/TopStor/'+opers[0]+' '+leaderip+' '+" ".join(opers[2:-1])+' '+'pullsync'
         print('cmdline',cmdline)
-        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+        try:
+         result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+        except subprocess.CalledProcessError as e:
+         # exit 3 of UnixChangeUser: a group of the user is not on this node yet (its sync/group request is filed after the
+         # UsrChange or comes later in this pass, test 620). The groups that exist were applied; the request is kept and tried
+         # again on the next pass, for at most usrchangeretry seconds after it was filed (then the group's own sync applies it).
+         if e.returncode == 3 and timestamp() - reqorder(syncinfo)/1000000000 < usrchangeretry:
+          print('kept for the next pass:', e.output.decode('utf-8','replace')[-300:])
+          flag = 0
+         elif e.returncode == 3:
+          print('a group is still missing after', usrchangeretry, 's, done:', e.output.decode('utf-8','replace')[-300:])
+         else:
+          raise
        else:
         print(opers,sync)
         if 'Add' in opers[0]:
