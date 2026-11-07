@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import subprocess,sys
+import subprocess,sys,datetime
 from etcdgetpy import etcdget as get
 from etcdgetnoportpy import etcdget as getnoport
 from etcdput import etcdput as put
@@ -23,20 +23,30 @@ def thread_add(user,syncip, tosync='pullavail'):
  with open('/root/usersync2','w') as f:
   f.write(str(user)+' + '+str(username)+'\n')
  
- if 'pullsync' in tosync:
+ # test 619 step 1: a copy whose read from the leader failed (the cluster link was down for seconds) was not made and nothing
+ # said so; the node reported in sync without the user. A failed read or a failed UnixAddUser is logged and returns False:
+ # oneusersync hands it to checksyncs, which keeps the sync request for its next pass.
+ try:
+  if 'pullsync' in tosync:
     userhash=getnoport(leaderip,pport,'usershash/'+username)[0]
     everyone=getnoport(leaderip,pport,'usersigroup/Everyone',username)
     if '_1' not in str(everyone):
         everyone=',Everyone'
     else:
         everyone=''
- else:
+  else:
     userhash=get(leaderip,'usershash/'+username)[0]
     everyone=get(leaderip, 'usersigroup/Everyone',username)
     if '_1' not in str(everyone):
         everyone=',Everyone'
     else:
         everyone=''
+ except Exception as e:
+  synclog(username, 'cannot read it from the leader: '+str(e))
+  return False
+ if str(userhash).strip() in ('', '_1', '-1', 'None'):
+  synclog(username, 'no usershash on the leader (read failed or not written yet)')
+  return False
  userinfo=user[1].split(':')
  userid=userinfo[0]
  usergd=userinfo[1]
@@ -54,6 +64,18 @@ def thread_add(user,syncip, tosync='pullavail'):
  print(cmdline)
  print('***************************')
  result=subprocess.run(cmdline,stdout=subprocess.PIPE)
+ if result.returncode != 0:
+  synclog(username, 'UnixAddUser exit '+str(result.returncode))
+  return False
+ return True
+
+def synclog(username, why):
+ print('user sync copy failed', username, why)
+ try:
+  with open('/root/usersyncfail.log','a') as f:
+   f.write(str(datetime.datetime.now())+' sync copy of user '+username+' failed: '+why+'\n')
+ except Exception:
+  pass
 
 def thread_del(username,syncip, pullsync='pullavail'):
  global allusers, leader ,leaderip, myhost, myhostip
@@ -150,7 +172,7 @@ def oneusersync(oper,usertosync,tosync='pullavail'):
     if len(user) == 0:
         print('oneusersync: no user',usertosync,'on the leader')
         return
-    thread_add(user[0],syncip,tosync)
+    return thread_add(user[0],syncip,tosync)
  else:
     user = usertosync
     # the users of the leader NOW (allusers was the list of the last full sync of this long running process: it still

@@ -538,7 +538,10 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
         print(opers,sync)
         if 'Add' in opers[0]:
             if 'user' in sync:
-               oneusersync('Add',opers[2],'pullavail') 
+               # a copy that failed (read from the leader, UnixAddUser) keeps the request: tried again on the next pass
+               # (test 619 step 1: marked done without the user)
+               if oneusersync('Add',opers[2],'pullavail') is False:
+                  flag = 0
             else:
                onegroupsync('Add',opers[2],'pullavail') 
         elif 'Del' in opers[0]:
