@@ -32,6 +32,22 @@ def capacitywarn(pool, limit=90, every=7200):
   print('capacitywarn',pool,e)
 
 
+# The WWN/naa id of a pool disk as zpool status shows it (scsi-<id>, wwn-0x<id>, a by-id path, -partN), to compare with
+# the id column of a LIO lsscsi line ([8:0:0:0] disk LIO-ORG sdb-<host> 4.0 /dev/sdg <id> 10.7GB).
+def diskwwn(name):
+ n=name.split('/')[-1]
+ if '-part' in n:
+  n=n.split('-part')[0]
+ for pre in ('scsi-','wwn-0x','wwn-'):
+  if n.startswith(pre):
+   return n[len(pre):]
+ return n
+
+def wwnmatch(name, lioid):
+ n=diskwwn(name)
+ return len(lioid) > 3 and (n == lioid or '3'+n == lioid)
+
+
 def putzpool():
  global leader, leaderip, myhost, myip
  sitechange=0
@@ -224,7 +240,10 @@ def putzpool():
      disknotfound=1
     for lss in lsscsi:
      z=lss.split()
-     if (z[6] in b[0] and len(z[6]) > 3 and 'OFF' not in b[1]) or (z[3].split('-')[0] in str(internalls)):
+     # QSD5.324 (test 631 step 3): a pool disk takes host/size only from the lsscsi line with ITS OWN WWN.  The old second
+     # condition (the backstore prefix, e.g. sdb of sdb-<host>, among this node's internal disks) was true for the first LIO
+     # line on every node, so every disk got that line's host and a lost disk of another node looked local.
+     if len(z) > 7 and wwnmatch(b[0], z[6]):
       diskid=lsscsi.index(lss)
       host=z[3].split('-')[1]
       lhosts.add(host)
@@ -232,12 +251,13 @@ def putzpool():
       size=z[7]
       devname=z[5].replace('/dev/','')
       disknotfound=0
-      if z[3].split('-')[0] not in str(internalls):
+      if z[3].split('-')[0] not in str(internalls) and lss in freepool:
         freepool.remove(lss)
       break
     if disknotfound == 1:
+      # no lsscsi line of its own (the disk of a stopped/lost node, a dm- or guid name): host unknown, never borrowed
       diskid=0
-      host='_1'
+      host='UNAVAIL' if len(lsscsi) > 0 else '_1'
       size='_1'
       devname=b[0]
       
