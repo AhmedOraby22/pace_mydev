@@ -79,6 +79,33 @@ def reqorder(item):
   n *= 1000
  return n
 
+def isgroupadd(item):
+ """a pending group create: sync/group/UnixAddGroup_<params>/request (a group delete is UnixDelGroup_..., a full copy initial)"""
+ key = str(item[0])
+ if '/group/' not in key:
+  return False
+ return 'Add' in key.split('/group/',1)[1].split('/')[0].split('_')[0]
+
+def groupsfirst(reqs):
+ """A UsrChange that names a group this node does not have yet exits 3 (UnixChangeUser) and is kept and tried again on every
+ pass (usrchangeretry).  When such copies sort before the pending sync/group request that creates the group, every pass ran
+ them all first (one full UnixChangeUser each, ~5.5 s on a follower) and reached the group only after them (test 629: 27
+ copies, ~150 s per pass, the group's members reached node2 after more than 10 minutes).  The UsrChange requests that sort
+ before the last pending group create are moved right after it (their order kept; every other request keeps its place), so
+ the group is made first and each copy then finds its groups and runs once.  A UsrChange applies the leader's groups, so the
+ end state does not depend on this order (test 620)."""
+ last = -1
+ for i, item in enumerate(reqs):
+  if isgroupadd(item):
+   last = i
+ if last < 0:
+  return reqs
+ moved = [ x for x in reqs[:last] if '/UsrChange/' in str(x[0]) ]
+ if len(moved) == 0:
+  return reqs
+ print('UsrChange requests after the group create:', len(moved))
+ return [ x for x in reqs[:last+1] if '/UsrChange/' not in str(x[0]) ] + moved + reqs[last+1:]
+
 def insync(leaderip, leader):
     print('checking in sync -------------------')
     isinsync = 1 
@@ -421,6 +448,7 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
  if len(myrequests) > 1:
     print('multiple requests',myrequests)
     myrequests.sort(key=reqorder, reverse=False)
+    myrequests = groupsfirst(myrequests)
  print('myrequests are', myrequests)
  for syncinfo in myrequests:
   evacuateflag = 0
