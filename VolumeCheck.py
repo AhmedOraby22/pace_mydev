@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import subprocess,sys, os
+import subprocess,sys, os, fcntl
 from etcdgetpy import etcdget as get
 from etcdput import etcdput as put 
 from etcddel import etcddel as dels 
@@ -110,19 +110,57 @@ def nfsnew( etcds, replis, dockers):
  print('cccccccccccccccccccccccccccccc')
  print('dirty',dirtyset)
  print('cccccccccccccccccccccccccccccc')
+ # QSD5.337 (test 646 QX-047 step 3): VolumeChangeNFS rebuilds the container of a changed address itself and holds the address
+ # lock (/tmp/shareaddr.<ip>.lock) meanwhile; this pass rebuilt the same container in parallel. A locked address is skipped
+ # (the next pass looks again); the lock is held here while the container is rebuilt (nfsnew.sh does not lock again,
+ # SHAREADDR_LOCK); a container that is running with the volume once the lock is ours (rebuilt by the holder) is left alone.
  for res in dirtyset:
    reslist=res.split('/')
+   ipaddr = reslist[getippos('nfs')]
    print('update',reslist[1])
-   cmdline = '/TopStor/undockerthis.sh '+reslist[getippos('nfs')]
-   result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
-   left='volumes/NFS/'+myhost+'/'+'/'.join(reslist[0:2])
-   put(leaderip, left,res)
-   dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
-   cmdline='/TopStor/nfsnew.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+etcdip+' '+reslist[0]+' '+reslist[1]+' '+reslist[9]+' '+reslist[10]+' NFS'
-   print('aloooooooooooooooooooooo')
-   print(cmdline)
-   result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
-   put(etcdip,'dirty/volume','0')
+   lockf = addrlock(ipaddr)
+   if lockf is None:
+     print('address',ipaddr,'is being changed by another job, skipped')
+     continue
+   try:
+     left='volumes/NFS/'+myhost+'/'+'/'.join(reslist[0:2])
+     if reslist[-1] == 'active' and inrunning('NFS-'+ipaddr, '"/'+reslist[0]+'/'+reslist[1]+'"'):
+       put(leaderip, left,res)
+       dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
+       print('container NFS-'+ipaddr+' already runs with',reslist[1])
+       continue
+     cmdline = '/TopStor/undockerthis.sh '+ipaddr
+     result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
+     put(leaderip, left,res)
+     dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
+     cmdline='/TopStor/nfsnew.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+etcdip+' '+reslist[0]+' '+reslist[1]+' '+reslist[9]+' '+reslist[10]+' NFS'
+     print('aloooooooooooooooooooooo')
+     print(cmdline)
+     result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE, env=dict(os.environ, SHAREADDR_LOCK=ipaddr)).stdout.decode('utf-8')
+     put(etcdip,'dirty/volume','0')
+   finally:
+     lockf.close()
+
+def addrlock(ipaddr):
+ # the per-address lock of shareaddr changes (VolumeChangeNFS, nfsnew.sh); None when another job holds it
+ try:
+   lockf = open('/tmp/shareaddr.'+ipaddr+'.lock', 'w')
+ except OSError:
+   return open(os.devnull, 'w')   # no lock file possible: work as before, without the lock
+ try:
+   fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+ except OSError:
+   lockf.close()
+   return None
+ return lockf
+
+def inrunning(dckrname, mountsrc):
+ cmdline = 'docker ps --format {{.Names}}'
+ names = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8').split()
+ if dckrname not in names:
+   return False
+ cmdline = 'docker inspect '+dckrname
+ return mountsrc in subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
 
 def repairbyaddress(dirtyset, leftof, cmdof):
  # test 643 step 3: every share of an address runs in one container. A missing container made all its shares dirty and

@@ -41,6 +41,44 @@ def getnextlead():
 
 readyseen = None
 
+# QSD5.337 (test 646 QX-047 step 3): a peer is declared lost only after HOLDOFF seconds of failed checks in a row (it took ~3-4 s:
+# the leader's bond0 re-activations of one NFS address change, ~6 s, made the follower take over while the leader kept running,
+# both nodes leader and the pool imported on both). For the leader its own node address (ready/<leader>) is checked as well as
+# the cluster address: a leader that answers on its node address is not lost. failsince: peer (or '__localetcd__') -> first
+# failure of the current run of failures.
+HOLDOFF = 20
+failsince = dict()
+
+def reachable(ip):
+ # nmap on the etcd port (host discovery as root) and, if that does not say up, one ping
+ if not ip:
+  return False
+ try:
+  res = subprocess.check_output(['nmap','--max-rtt-timeout','500ms','-n','-p','2379',ip],stderr=subprocess.STDOUT,timeout=15).decode('utf-8')
+  if 'Host is up' in res or 'open' in res:
+   return True
+ except Exception:
+  pass
+ try:
+  subprocess.check_output(['ping','-c','1','-w','1',ip],stderr=subprocess.STDOUT,timeout=5)
+  return True
+ except Exception:
+  return False
+
+def heldoff(key, failed, what):
+ # True while a run of failures of <key> is shorter than HOLDOFF (the caller does not act yet); an ok check ends the run
+ if not failed:
+  failsince.pop(key, None)
+  return False
+ first = failsince.setdefault(key, stamp())
+ if stamp() - first < HOLDOFF:
+  print(what, 'failing for', int(stamp() - first), 's, lost only after', HOLDOFF, 's')
+  return True
+ failsince.pop(key, None)
+ with open('/root/heartproblem','a') as f:
+  f.write(chr(10)+what+' failed for '+str(int(stamp() - first))+' s in a row'+chr(10))
+ return False
+
 def leadernextlead(knowns):
  # LEADER ONLY.  The leader names the next leader: a node that has just become ready, or -- when the
  # current one is not a ready node any more (lost, evacuated, this node itself after a take over, None) --
@@ -110,7 +148,7 @@ def hostlost(host, hostip):
                         print('chceking new leader')
                         cmdline='nmap --max-rtt-timeout 500ms -n -p '+port+' '+leaderip 
                         result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-                        if ('Host is up' or 'open' ) in result:
+                        if 'Host is up' in result or 'open' in result:
                             result = (host,'ok')
                         else:
                             result = (host,'lost')
@@ -172,6 +210,8 @@ def heartbeat(*args):
             print('only one host is running..,,will do nothing')
             continue
         knownsn = len(knowns)
+        if heldoff('__localetcd__', tries < 10, 'ready keys from the local etcd '+str(etcd)):
+           continue
         if tries < 10: 
            hostlost(leader, leaderip)
         elif myhost == leader:
@@ -189,7 +229,7 @@ def heartbeat(*args):
                     continue
                 cmdline='nmap --max-rtt-timeout 500ms -n -p '+port+' '+pip
                 res=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
-                if ('Host is up' or 'open') in res:
+                if 'Host is up' in res or 'open' in res:
                     hostfound(phost, pip)
         except Exception:
             pass
@@ -206,12 +246,13 @@ def heartbeat(*args):
             tries = 0
             while tries < 2:
                 tries +=1
+                res = ''
                 try:
                     cmdline='nmap --max-rtt-timeout 500ms -n -p '+port+' '+hostip 
                     res=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
                 except:
                     result=(host,'doubt')
-                if ('Host is up' or 'open' ) in res:
+                if 'Host is up' in res or 'open' in res:
                     result = (host,'ok')
                 else:
                     result = (host,'doubt')
@@ -227,6 +268,12 @@ def heartbeat(*args):
                     break
                 sleep(1)
             print(result)
+            if 'ok' not in str(result) and host == leader and str(known[1]) not in ('', leaderip):
+                if reachable(str(known[1])):
+                    print('leader',host,'does not answer on',leaderip,'but on its node address',known[1],': not lost')
+                    result = (host,'ok on node address')
+            if heldoff(host, 'ok' not in str(result), 'host '+host+' '+hostip):
+                continue
             if 'ok' not in str(result):
                 with open('/root/heartproblem','a') as f:
                         f.write('OK:\n'+host+' '+res)
