@@ -3,7 +3,8 @@
 #exit
 ##########################
 cd /pace
-echo $@ > /root/addzfsvol
+# the trace without the CHAP secret ($7)
+echo $@ | awk '{ if (NF >= 7) $7 = "***"; print }' > /root/addzfsvol
 #/pace/addzfsvolumeastarget.sh $pool'/'${vol} $ipaddr $portalport $targetiqn $chapuser $chappas
 pool=`echo $@ | awk '{print $1}'`
 vol=`echo $@ | awk '{print $2}'`
@@ -50,18 +51,28 @@ tpg='tpg1'
 #targetcli iscsi/iqn${iqn} create $portalport  
 targetcli iscsi/iqn${iqn} set global auto_add_mapped_luns=false
 targetcli iscsi/iqn.2016-03.com.$ipdom:data/${tpg}/portals delete 0.0.0.0 3260
-targetcli iscsi/iqn${iqn}/${tpg}/luns/ create /backstores/block/$diskids  
+# QSD5.340 (test 650): one TPG LUN per backstore. It was created again on every call (one call per initiator, and again by
+# VolumeChangeISCSI), so the volume could appear twice on the target under another LUN number.
+targetcli ls iscsi/iqn${iqn}/${tpg}/luns 1 2>/dev/null | grep -qF "[block/$diskids "
+[ $? -ne 0 ] && targetcli iscsi/iqn${iqn}/${tpg}/luns/ create /backstores/block/$diskids
+# no initiator (This_lun_is_not_mapped from the UI, or empty): the LUN is on the target, no node ACL is made for it
+echo "$target" | grep -Eiq '^(iqn|eui|naa)\.'
+if [ $? -eq 0 ];
+then
 targetcli iscsi/iqn${iqn}/${tpg}/acls/ create $target
 echo targetcli iscsi/iqn${iqn}/${tpg}/acls/ create $target
 cluns=`targetcli iscsi/iqn${iqn}/${tpg}/acls/$target ls`
 echo $cluns | grep $diskids 
 if [ $? -ne 0 ];
 then
- # the number of LUNs already mapped for this initiator (the old 'echo $cluns | wc -l' always counted one line = 1)
- nextlun=`targetcli iscsi/iqn${iqn}/${tpg}/acls/$target ls | grep -c mapped_lun`
+ # the lowest mapped_lun number not used yet by this initiator (a count gave a used number once a lower one was deleted)
+ used=`echo "$cluns" | grep -o 'mapped_lun[0-9]*' | sed 's/mapped_lun//'`
+ nextlun=0
+ while echo "$used" | grep -qx $nextlun; do nextlun=$((nextlun+1)); done
  echo targetcli iscsi/iqn${iqn}/${tpg}/acls/$target = $nextlun
  targetcli iscsi/iqn${iqn}/${tpg}/acls/$target create mapped_lun=$nextlun tpg_lun_or_backstore=/backstores/block/$diskids write_protect=0
  echo targetcli iscsi/iqn${iqn}/${tpg}/acls/$target create mapped_lun=$nextlun tpg_lun_or_backstore=/backstores/block/$diskids write_protect=0
+fi
 fi
 targetcli iscsi/iqn${iqn}/${tpg} set attribute demo_mode_write_protect=0 
 targetcli iscsi/iqn${iqn}/${tpg} set attribute cache_dynamic_acls=1
