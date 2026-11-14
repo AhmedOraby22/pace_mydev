@@ -20,8 +20,6 @@ is_container 2>/dev/null && /pace/czvoldev.sh
 disk=`ls -l /dev/zvol/${pool}/$vol | awk -F'/' '{print $NF}'`
 echo disk $disk
 #chapuser='iqn.1991-05.com.microsoft:desktop-jckvhk3'
-#chapuser='MoatazNegm'
-#chappass='MezoPass1234'
 myhost=`hostname -s`;
 change=0
 #declare -a iscsitargets=(`cat /pacedata/iscsitargets | awk '{print $2}' `;
@@ -78,9 +76,10 @@ targetcli iscsi/iqn${iqn}/${tpg} set attribute demo_mode_write_protect=0
 targetcli iscsi/iqn${iqn}/${tpg} set attribute cache_dynamic_acls=1
 # only the initiators listed on the LUN (the acls created above) may log in: generate_node_acls=1 gave every other IQN a dynamic ACL with all LUNs mapped
 targetcli iscsi/iqn${iqn}/${tpg} set attribute generate_node_acls=0
-targetcli iscsi/iqn${iqn}/${tpg} set attribute authentication=0
-targetcli iscsi/iqn${iqn}/${tpg} set auth userid=$chapuser 
-targetcli iscsi/iqn${iqn}/${tpg} set auth password=$chappas
+# QSD5.341 (test 653 QX-054): CHAP on the node ACL of the initiator (the requested pair, chappas encrypted by fapi), and
+# authentication=1 while an ACL of the TPG has CHAP. It was 'set auth' on the TPG (used by generated ACLs only, which are
+# off) with authentication=0: CHAP was never asked, and the secret was on the targetcli command line (~/.targetcli/log.txt).
+/pace/iscsichap.sh iqn${iqn} "$chapuser" "$chappas" $target
 targetcli iscsi/iqn.2016-03.com.$ipdom:data/${tpg}/portals create $ipaddr $portalport 
 targetcli saveconfig
  #targetcli saveconfig /pacedata/targetconfig
