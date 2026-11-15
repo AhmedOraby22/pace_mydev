@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 import subprocess, sys
-import os, atexit
+import os, atexit, grp
 from logqueue import queuethis
 from etcdgetpy import etcdget as get
 from etcdgetnoportpy import etcdget as getnoport
@@ -106,39 +106,66 @@ def groupsfirst(reqs):
  print('UsrChange requests after the group create:', len(moved))
  return [ x for x in reqs[:last+1] if '/UsrChange/' not in str(x[0]) ] + moved + reqs[last+1:]
 
+insyncgrace = 20   # seconds a request may stay without the done mark of a node before the cluster reads "not in sync"
+
 def insync(leaderip, leader):
+    """isinsync = no only when a node of the cluster (ready/ or ActivePartners/) has not marked a pending request that is older
+    than insyncgrace seconds.  Every existing request used to set "no", also one that every node had already marked done (it
+    is removed only by the prune of the NEXT leader pass), and a fresh one that no node could have reached yet: the idle
+    cluster files a sync/log request every ~14 s, so single reads flickered "no" (test 671).  A request is done by a node when
+    the node has a mark (<request>/<node>) with the request's value, as the follower itself decides (mysyncs).  Stamps more
+    than 60 s in the future, or none that can be read, count as old.  Done marks whose request is gone are removed (as
+    before, once older than insyncgrace); they do not make the cluster "not in sync"."""
     print('checking in sync -------------------')
-    isinsync = 1 
-     
+    isinsync = 1
+    result = get(leaderip,'nodedirty','--prefix')
+    if 'dhcp' in str(result):
+        isinsync = 0
     if isinsync == 1:
-        result = get(leaderip,'nodedirty','--prefix')
-        if 'dhcp' in str(result):
-            isinsync = 0 
-    if isinsync == 1:
-        allsyncs=get(leaderip,'sync','--prefix')
-        allsyncs=[x for x in allsyncs if 'initial' not in x[0] ]
-        for sync in allsyncs:
-            # sync/cversion requests are no longer handled here; scripts that still post them must not block insync
-            syncgroup = [ x for x in allsyncs if sync[1] in x[1] and 'cversion' not in x[0] ]
-            initrequest = [ x for x in syncgroup if 'request/dhcp' not in x[0] ]
-            if len(syncgroup) > 0 and len(initrequest) == 0 :
-                print('to delete', sync,'syncgroup',len(syncgroup),'initrequest',len(initrequest))
-                dels(leaderip,'sync',sync[1])
-                print('some syncs not to initialize or remove')
-                isinsync = 0
-                break
-            if len(syncgroup) > 0:
-                print('syncgroup:',syncgroup)
-                print("some nodes didn't sync completely")
-                isinsync = 0 
-                break
+        allsyncs = [ x for x in get(leaderip,'sync','--prefix') if isinstance(x,(tuple,list)) and len(x) == 2 ]
+        # sync/cversion requests are no longer handled here; scripts that still post them must not block insync
+        allsyncs = [ x for x in allsyncs if 'initial' not in x[0] and 'cversion' not in x[0] ]
+        nodes = set()
+        for pre in ('ready/', 'ActivePartners/'):
+            for x in get(leaderip, pre, '--prefix'):
+                if isinstance(x,(tuple,list)) and str(x[0]).startswith(pre) and len(str(x[0])) > len(pre):
+                    nodes.add(str(x[0])[len(pre):])
+        requests = [ x for x in allsyncs if x[0].endswith('/request') ]
+        reqvalues = set([ x[1] for x in requests ])
+        done = dict()
+        orphans = set()
+        for x in allsyncs:
+            base, sep, host = x[0].rpartition('/')
+            if not base.endswith('/request'):
+                continue
+            done.setdefault(host, set()).add(x[1])
+            if x[1] not in reqvalues:
+                orphans.add(x[1])
+        now = timestamp()
+        for orphan in orphans:
+            # only old ones: a script that files the mark before its request (UnixAddUser, UnixAddGroup) must not lose it
+            if now - reqorder(('', orphan))/1000000000 < insyncgrace:
+                continue
+            print('done marks without a request, removed:', orphan)
+            dels(leaderip,'sync',orphan)
+        for req in requests:
+            missing = [ h for h in nodes if req[1] not in done.get(h, set()) ]
+            if len(nodes) > 0 and len(missing) == 0:
+                continue
+            age = now - reqorder(req)/1000000000
+            if 0 <= age < insyncgrace or -60 < age < 0:
+                print('pending, still in its grace time:', req, 'not marked by', missing)
+                continue
+            print("some nodes didn't sync completely:", req, 'not marked by', missing if len(nodes) > 0 else 'unknown nodes')
+            isinsync = 0
+            break
     if isinsync:
         print('the cluster is in sync')
         put(leaderip,'isinsync', 'yes')
     else:
         print('some nodes still syncing')
         put(leaderip,'isinsync', 'no')
-        
+
 def initchecks(leader, leaderip, myhost, myhostip):
     if leader == myhost:
         return leaderip
@@ -415,8 +442,35 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
 
 
 
+def synclogcopy(leaderip, etcdip, logid):
+ """In process what /TopStor/synclogs.sh did for one sync/log request (bash + etcdget.py + etcdput.py + etcddel.py, three
+ python starts, ~1-3 s on a slow node for every notification of the cluster; a burst files several per object, test 671):
+ the leader's log/<logid> into this node's etcd, then this node's own mark key of the request is removed, as there."""
+ logdata = str(get(leaderip, 'log/'+logid)[0])
+ if logdata in ('', '_1'):
+  print('no log data found for log/'+logid+' on the leader', leaderip)
+  return
+ if etcdip != leaderip:
+  put(etcdip, 'log/'+logid, logdata)
+ dels(etcdip, 'sync/log/'+logid+'/request/'+hostname())
+ print('synced log/'+logid, 'from', leaderip, 'to', etcdip)
+
+def samerow(leaderip, myhostip, key):
+ """the value of key is the same (and real) in the leader's etcd and in this node's etcd"""
+ try:
+  lval = str(get(leaderip, key)[0])
+  return lval not in ('', '_1', '-1', 'None') and lval == str(get(myhostip, key)[0])
+ except Exception:
+  return False
+
 def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
  global syncs, syncanitem, forReceivers, etcdonly,  allsyncs
+ # test 671: the users and groups copied in THIS pass. Their copy read the leader's state after every request of this pass
+ # was filed (the list is read first), so their UsrChange / GrpChange / passwd requests of this pass are already applied:
+ # marked done without running UnixChangeUser / UnixChangeGroup / UnixChangePass again (one full script each, ~5-25 s per
+ # object on the slow follower).
+ addedusers = set()
+ addedgroups = set()
  #if 'pullsync' in pullsync:
  #   print('***************************************************************************')
  #   print('syncing replication data')
@@ -495,8 +549,10 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
             result=subprocess.run(cmdline.split(),stderr=subprocess.STDOUT)
       elif 'log' in sync:
         logid=opers[0]+"_"+opers[1]
-        cmdline="/TopStor/synclogs.sh  "+leaderip+" "+etcdip+" "+logid+" "+opers[1]
-        result=subprocess.run(cmdline.split(), stderr=subprocess.STDOUT)
+        try:
+          synclogcopy(leaderip, etcdip, logid)
+        except Exception as e:
+          print('log copy failed', logid, e)
       elif 'bond' in sync:
         synckeys(leaderip, myhostip, sync, sync)
         cmdline ="/TopStor/syncbonds.sh "+etcdip
@@ -559,6 +615,10 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
         except subprocess.CalledProcessError as e:
          print('HostManualconfig'+sync.upper()+' failed (exit '+str(e.returncode)+'): '+e.output.decode('utf-8','replace'))
          result=''
+       elif sync == 'UsrChange' and myhost != leader and len(opers) > 2 and opers[2] in addedusers and not os.path.exists('/tmp/usrchangemissing.'+opers[2]):
+        print('UsrChange of', opers[2], 'applied by its user copy in this pass, done')
+       elif sync == 'GrpChange' and myhost != leader and len(opers) > 2 and opers[2] in addedgroups and not os.path.exists('/tmp/grpchangemissing.'+opers[2]):
+        print('GrpChange of', opers[2], 'applied by its group copy in this pass, done')
        elif sync in ['UsrChange', 'GrpChange']:
         cmdline = '/TopStor/'+opers[0]+' '+leaderip+' '+" ".join(opers[2:-1])+' '+'pullsync'
         print('cmdline',cmdline)
@@ -581,10 +641,20 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
             if 'user' in sync:
                # a copy that failed (read from the leader, UnixAddUser) keeps the request: tried again on the next pass
                # (test 619 step 1: marked done without the user)
-               if oneusersync('Add',opers[2],'pullavail') is False:
+               added = oneusersync('Add',opers[2],'pullavail')
+               if added is False:
                   flag = 0
+               elif added is True:
+                  addedusers.add(opers[2])
             else:
                onegroupsync('Add',opers[2],'pullavail') 
+               # made here and its row is the leader's row now (UnixChangeGroup copies it): its GrpChange of this pass is applied
+               try:
+                  grp.getgrnam(opers[2])
+                  if myhost != leader and samerow(leaderip, myhostip, 'usersigroup/'+opers[2]):
+                     addedgroups.add(opers[2])
+               except KeyError:
+                  pass
         elif 'Del' in opers[0]:
             if 'user' in sync:
                oneusersync('Del',opers[2],'pullavail') 
@@ -597,7 +667,10 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
 
    #if sync in special1 and myhost != leader :
 
-   if sync in special1 :
+   if sync in special1 and myhost != leader and len(opers) > 1 and opers[1] in addedusers and samerow(leaderip, myhostip, 'usershash/'+opers[1]):
+      # the user was made in this pass with the leader's hash as it is now (UnixAddUser stores it unchanged): applied
+      print('passwd of', opers[1], 'applied by its user copy in this pass, done')
+   elif sync in special1 :
       try:
        if myhost != leader:
         # UnixChangePass reads the hash from THIS node's etcd; nothing copied the leader's new hash here, so a
