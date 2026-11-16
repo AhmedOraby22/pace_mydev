@@ -424,6 +424,11 @@ def putzpool():
  x=[y for y in xall if myhost in str(y)]
  xnotfound=[y for y in x if y[0].replace('pools/','') not in str(poolsstatus)]
  xnew=[y for y in poolsstatus if y[0].replace('pools/','') not in str(x)]
+ # test 676 step 2: a pool that DGdestroyPool is deleting (pooldeleting/<pool>) is not put back while it is still imported
+ # (its pools/ key came back and stayed ~5 min after the delete)
+ if xnew:
+  deleting = str(get(leaderip, 'pooldeleting/', '--prefix'))
+  xnew = [y for y in xnew if 'pooldeleting/'+y[0].replace('pools/','') not in deleting]
  for y in xnotfound:
   if y[0] not in xall:
    dels(leaderip, y[0].replace('pools/',''),'--prefix')
