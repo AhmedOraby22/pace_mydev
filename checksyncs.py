@@ -457,6 +457,16 @@ def synclogcopy(leaderip, etcdip, logid):
   return
  if etcdip != leaderip:
   put(etcdip, 'log/'+logid, logdata)
+  # test 677 step 5: rows written while this node was down never reached its /TopStordata/TopStorglobal.log (they are sent
+  # live only to the nodes that are up), so they were gone after the next leader change.  Catching up on the pending
+  # sync/log requests now also writes the row into the local file (the value is the logmsg2.sh command line; logmsg2.sh
+  # skips a row that is already there).
+  args = logdata.split()
+  if args and args[0] == '/TopStor/logmsg2.sh' and len(args) >= 7:
+   try:
+    subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+   except Exception as e:
+    print('could not write log/'+logid+' to the local log file:', e)
  dels(etcdip, 'sync/log/'+logid+'/request/'+hostname())
  print('synced log/'+logid, 'from', leaderip, 'to', etcdip)
 
