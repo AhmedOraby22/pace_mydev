@@ -211,7 +211,12 @@ def doinitsync(leader,leaderip,myhost, myhostip, syncinfo,pullsync='pullavail',p
     if sync in ['tz','ntp','gw','dns']: 
      cmdline='/TopStor/HostManualconfig'+sync.upper()+" "+" ".join([leader, leaderip, myhost, myhostip]) 
      print('cmd',cmdline)
-     result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+     try:
+      result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+     except subprocess.CalledProcessError as e:
+      # e.g. HostManualconfigTZ exits 1 when the leader has no zone yet: the rest of the initial sync still runs
+      print('HostManualconfig'+sync.upper()+' failed (exit '+str(e.returncode)+'): '+e.output.decode('utf-8','replace'))
+      result=''
     if sync == 'priv':
         user=syncleft.split('/')[2]
         synckeys(leaderip, myhostip, 'usersinfo/'+user, 'usersinfo/'+user)
