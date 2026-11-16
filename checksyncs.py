@@ -341,6 +341,14 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
       print(sync,opers)
       if 'ready' not in sync:
         dels(myhostip,opers[1].replace(':::','_').replace('::','/'),opers[2].replace(':::','_').replace('::','/'))
+      # test 678 step 3: a deleted pool left ActPool/<pool> and sizevol/<pool>/... in the followers' etcd: the ActPool Del
+      # request (Del_<pool>_<guid>) deleted the key '<pool>' above, and nothing deleted sizevol.  With the pool, they go.
+      if sync == 'pools' and len(opers) > 2:
+        dpool = opers[2].replace(':::','_').replace('::','/')
+        dels(myhostip, 'ActPool/'+dpool)
+        dels(myhostip, 'sizevol/'+dpool, '--prefix')
+      if sync == 'ActPool' and len(opers) > 1:
+        dels(myhostip, 'ActPool/'+opers[1].replace(':::','_').replace('::','/'))
    if sync in syncanitem:
       if 'nextlead' in sync:
         synckeys(leaderip,myhostip, sync,sync)
@@ -560,6 +568,14 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
       print(sync,opers)
       if 'ready' not in sync:
         dels(myhostip,opers[1].replace(':::','_').replace('::','/'),opers[2].replace(':::','_').replace('::','/'))
+      # test 678 step 3: a deleted pool left ActPool/<pool> and sizevol/<pool>/... in the followers' etcd: the ActPool Del
+      # request (Del_<pool>_<guid>) deleted the key '<pool>' above, and nothing deleted sizevol.  With the pool, they go.
+      if sync == 'pools' and len(opers) > 2:
+        dpool = opers[2].replace(':::','_').replace('::','/')
+        dels(myhostip, 'ActPool/'+dpool)
+        dels(myhostip, 'sizevol/'+dpool, '--prefix')
+      if sync == 'ActPool' and len(opers) > 1:
+        dels(myhostip, 'ActPool/'+opers[1].replace(':::','_').replace('::','/'))
    if sync in syncanitem:
       if 'nextlead' in sync:
         synckeys(leaderip,myhostip, sync,sync)
