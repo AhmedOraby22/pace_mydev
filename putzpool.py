@@ -5,6 +5,7 @@ from os import listdir
 from logqueue import queuethis, initqueue
 from etcdput import etcdput as put
 from etcdgetpy import etcdget as get 
+from poolguard import deletingpools
 from etcddel import etcddel as dels 
 from os.path import getmtime
 
@@ -427,8 +428,8 @@ def putzpool():
  # test 676 step 2: a pool that DGdestroyPool is deleting (pooldeleting/<pool>) is not put back while it is still imported
  # (its pools/ key came back and stayed ~5 min after the delete)
  if xnew:
-  deleting = str(get(leaderip, 'pooldeleting/', '--prefix'))
-  xnew = [y for y in xnew if 'pooldeleting/'+y[0].replace('pools/','') not in deleting]
+  deleting = deletingpools(leaderip)
+  xnew = [y for y in xnew if y[0].replace('pools/','') not in deleting]
  for y in xnotfound:
   if y[0] not in xall:
    dels(leaderip, y[0].replace('pools/',''),'--prefix')

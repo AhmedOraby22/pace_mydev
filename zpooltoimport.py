@@ -4,6 +4,7 @@ import os, json
 from logqueue import queuethis, initqueue
 from etcdput import etcdput as put
 from etcdgetpy import etcdget as get 
+from poolguard import deletingpools
 from etcddel import etcddel as dels
 from poolstoimport import getpoolstoimport, initgetpoolstoimport
 from allphysicalinfo import getall 
@@ -265,7 +266,7 @@ def zpooltoimport(*args):
     continue
    # test 678 step 3: a pool that is being deleted is never imported here (the standby imported its old leg 16 s after the
    # delete on the owner, and the deleted pool came back with its volumes)
-   if get(leaderip, 'pooldeleting/'+pool)[0] not in ('', '_1', -1):
+   if pool in deletingpools(leaderip):
     print('pool is being deleted, not imported', pool)
     continue
    if foreignpool(pool):
@@ -372,6 +373,8 @@ def zpooltoimport(*args):
     pool = poolinfo['name']
     if 'pree' in pool:
      continue
+    if pool in deletingpools(leaderip):
+        continue           # test 678: a deleted pool gets no standby again
     if pool not in str(needtoimport):
         nxthost=selecthost(poolinfo,readies)
         print('nxthosts',nxthost)
