@@ -17,6 +17,7 @@ from allphysicalinfo import getall
 from time import sleep
 from sendhost import sendhost
 from time import time as stamp
+from diskguard import foreignpool
 #from syncpools import syncmypools
 os.environ['ETCDCTL_API']= '3'
 newop=[]
@@ -569,6 +570,13 @@ def spare2(*args):
       print('rmdisk:',rmdiskname)
       print('raidname:',raidname)
       print('adiskname:',adiskname)
+      other = foreignpool(adiskname, poolname)
+      if other:
+         # test 674: the disk holds a label of another pool (exported or owned by a node that is down): never take it
+         print('disk', adiskname, 'belongs to pool', other, ': not a spare for', poolname)
+         dels(leaderip,'ask/needtoreplace',adiskname)
+         dels(leaderip,'needtoreplace',adiskname)
+         continue
       if 'mirror-temp' in raidname:
          cmdline2=['/sbin/zpool', 'attach','-f', poolname, rmdiskname,adiskname]
       elif '_1' in rmdiskname:
