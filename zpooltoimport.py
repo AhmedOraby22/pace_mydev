@@ -263,6 +263,11 @@ def zpooltoimport(*args):
    pool = poolline[0].replace('poolnxt/','')
    if pool in str(pools):
     continue
+   # test 678 step 3: a pool that is being deleted is never imported here (the standby imported its old leg 16 s after the
+   # delete on the owner, and the deleted pool came back with its volumes)
+   if get(leaderip, 'pooldeleting/'+pool)[0] not in ('', '_1', -1):
+    print('pool is being deleted, not imported', pool)
+    continue
    if foreignpool(pool):
     print('pool of another cluster, not imported', pool)
     dels(leaderip, 'poolnxt', pool)
