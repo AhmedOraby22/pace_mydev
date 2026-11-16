@@ -489,6 +489,10 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
  else:
     etcdip = myhostip
  allsyncs = get(leaderip,'sync','request') 
+ # only real request keys (.../request or .../request/<host>): an entry whose key lost its '/request' (a value with a newline
+ # shifted the key/value pairs, test 674 step 7) was marked done as '<key>/<host>' = '/request', which matched again: the
+ # marks grew without end (thousands of sync/Partnr keys)
+ allsyncs = [ x for x in allsyncs if isinstance(x,(tuple,list)) and len(x) > 1 and '/request' in str(x[0]) ]
  if 'pullsync' in pullsync:
     print('allsyncs',pullsync,allsyncs)
  donerequests = [ x for x in allsyncs if '/request/dhcp' in str(x) ] 
