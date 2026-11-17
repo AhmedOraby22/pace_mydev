@@ -248,7 +248,7 @@ def heartbeat(*args):
                 tries +=1
                 res = ''
                 try:
-                    cmdline='nmap --max-rtt-timeout 500ms -n -p '+port+' '+hostip 
+                    cmdline='nmap --max-rtt-timeout 500ms --host-timeout 1500ms -n -p '+port+' '+hostip   # test 680: a dead peer answers nothing; nmap's own waits made a round ~5 s
                     res=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
                 except:
                     result=(host,'doubt')
