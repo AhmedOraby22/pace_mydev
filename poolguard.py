@@ -8,7 +8,7 @@ that can be a few minutes old and put the deleted pool's keys back (seen: pools/
 from time import time
 from etcdgetpy import etcdget as get
 
-DELETEDSECS = 900
+DELETEDSECS = 30*24*3600   # test 679: 15 min was too short, an OFFLINE leg (label not cleared by the destroy) was imported later
 
 def deletingpools(leaderip):
     """the names of the pools deleted (or being deleted) in the last DELETEDSECS seconds"""
