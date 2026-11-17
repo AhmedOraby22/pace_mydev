@@ -46,7 +46,7 @@ readyseen = None
 # both nodes leader and the pool imported on both). For the leader its own node address (ready/<leader>) is checked as well as
 # the cluster address: a leader that answers on its node address is not lost. failsince: peer (or '__localetcd__') -> first
 # failure of the current run of failures.
-HOLDOFF = 20
+HOLDOFF = 5   # test 680: 20 s put the take-over 20 s past the limits (ping 33 s, limit 15 s). A check round takes ~4 s, so a peer is lost on the 3rd failed round (~8 s): still more than the ~6 s bond blip of test 646
 failsince = dict()
 
 def reachable(ip):
