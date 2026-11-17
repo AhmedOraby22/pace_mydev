@@ -305,7 +305,13 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
      myrequests.sort(key=reqorder, reverse=False)
  
  print('myrequests are', myrequests)
+ passstart = __import__('time').time()
  for syncinfo in myrequests:
+  # test 679 step 5: the list is read once per pass; a long log back-fill (sorted last) is cut after 60 s so that the next
+  # pass reads the list again and a request filed meanwhile (a new group) is not kept waiting behind it
+  if '/log/' in str(syncinfo[0]) and __import__('time').time() - passstart > 60:
+   print('log back-fill continues in the next pass')
+   break
   evacuateflag = 0
   flag = 1
   if  len(syncinfo[0]) == 1:
@@ -561,7 +567,13 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
  # first, and a group created meanwhile waited behind them for minutes
  myrequests = [ x for x in myrequests if '/log/' not in str(x[0]) ] + [ x for x in myrequests if '/log/' in str(x[0]) ]
  print('myrequests are', myrequests)
+ passstart = __import__('time').time()
  for syncinfo in myrequests:
+  # test 679 step 5: the list is read once per pass; a long log back-fill (sorted last) is cut after 60 s so that the next
+  # pass reads the list again and a request filed meanwhile (a new group) is not kept waiting behind it
+  if '/log/' in str(syncinfo[0]) and __import__('time').time() - passstart > 60:
+   print('log back-fill continues in the next pass')
+   break
   evacuateflag = 0
   flag = 1
   if  len(syncinfo[0]) == 1:
