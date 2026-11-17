@@ -455,6 +455,31 @@ def replisyncrequest(replirev, leader,leaderip,myhost, myhostip):
 
 
 
+glogfile = '/TopStordata/TopStorglobal.log'
+glogrows = None      # the rows of the local log file (without the trailing write time), read once per pass
+
+def writelogrow(a):
+ """Append one log row the way /TopStor/logmsg2.sh writes it (date time host type user code@@@args... epoch), once.
+ Test 679 step 5: one logmsg2.sh run per copied row (a shell, awk per field, a grep of the whole file) made a returning
+ node's first pass take ~35 min, and a group created meanwhile reached it after 485 s.  The file is read once per pass."""
+ global glogrows
+ dt, tm, host, code, mtype, muser = a[0], a[1], a[2], a[3], a[4], a[5]
+ row = dt+' '+tm+' '+host+' '+mtype+' '+muser+' '+code+'@@'+''.join('@'+x for x in a[6:])
+ if glogrows is None:
+  glogrows = set()
+  try:
+   with open(glogfile) as f:
+    for line in f:
+     glogrows.add(line.rstrip(chr(10)).rsplit(' ', 1)[0])
+  except OSError:
+   pass
+ if row in glogrows:
+  return
+ import time as _t
+ with open(glogfile, 'a') as f:
+  f.write(row+' '+str(int(_t.time()))+chr(10))
+ glogrows.add(row)
+
 def synclogcopy(leaderip, etcdip, logid):
  """In process what /TopStor/synclogs.sh did for one sync/log request (bash + etcdget.py + etcdput.py + etcddel.py, three
  python starts, ~1-3 s on a slow node for every notification of the cluster; a burst files several per object, test 671):
@@ -472,7 +497,7 @@ def synclogcopy(leaderip, etcdip, logid):
   args = logdata.split()
   if args and args[0] == '/TopStor/logmsg2.sh' and len(args) >= 7:
    try:
-    subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+    writelogrow(args[1:])
    except Exception as e:
     print('could not write log/'+logid+' to the local log file:', e)
  dels(etcdip, 'sync/log/'+logid+'/request/'+hostname())
@@ -488,6 +513,8 @@ def samerow(leaderip, myhostip, key):
 
 def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
  global syncs, syncanitem, forReceivers, etcdonly,  allsyncs
+ global glogrows
+ glogrows = None          # the local log file is read again in every pass (writelogrow)
  # test 671: the users and groups copied in THIS pass. Their copy read the leader's state after every request of this pass
  # was filed (the list is read first), so their UsrChange / GrpChange / passwd requests of this pass are already applied:
  # marked done without running UnixChangeUser / UnixChangeGroup / UnixChangePass again (one full script each, ~5-25 s per
@@ -530,6 +557,9 @@ def syncrequest(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
     print('multiple requests',myrequests)
     myrequests.sort(key=reqorder, reverse=False)
     myrequests = groupsfirst(myrequests)
+ # test 679 step 5: log copies (informational) after every other request: a returning node replayed hundreds of them
+ # first, and a group created meanwhile waited behind them for minutes
+ myrequests = [ x for x in myrequests if '/log/' not in str(x[0]) ] + [ x for x in myrequests if '/log/' in str(x[0]) ]
  print('myrequests are', myrequests)
  for syncinfo in myrequests:
   evacuateflag = 0
