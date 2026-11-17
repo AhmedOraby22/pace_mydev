@@ -46,7 +46,7 @@ readyseen = None
 # both nodes leader and the pool imported on both). For the leader its own node address (ready/<leader>) is checked as well as
 # the cluster address: a leader that answers on its node address is not lost. failsince: peer (or '__localetcd__') -> first
 # failure of the current run of failures.
-HOLDOFF = 5   # test 680: 20 s put the take-over 20 s past the limits (ping 33 s, limit 15 s). A check round takes ~4 s, so a peer is lost on the 3rd failed round (~8 s): still more than the ~6 s bond blip of test 646
+HOLDOFF = 7   # test 680: rounds on a dead peer take ~2.5 s now: lost on the ~4th failed round (~7.5 s), still more than the ~6 s bond blip of test 646
 failsince = dict()
 
 def reachable(ip):
@@ -265,6 +265,10 @@ def heartbeat(*args):
                     except subprocess.CalledProcessError as e:
                         result=(host,'lost')
                 if 'ok' in str(result):
+                    break
+                # test 680: no port and no ping answer: this round is over (the second try and its 1 s sleep made a round on a
+                # dead peer ~5 s; HOLDOFF counts from the first failed round, so detection took ~15 s)
+                if 'lost' in str(result):
                     break
                 sleep(1)
             print(result)
