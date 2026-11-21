@@ -280,8 +280,11 @@ def zpooltoimport(*args):
     continue
    print('pool to be imported now', pool)
    poolid = get(leaderip,'ActPool/'+pool)[0]
-   if poolid == '_1':
-    poolid = pool
+   if poolid in ('_1', '', -1):
+    # test 680: no ActPool/<pool> = the cluster does not know this pool (deleted, its marker gone after a cold boot, or a
+    # stale leg): it was imported by name and came back with its shares.  Every real pool gets ActPool at creation.
+    print('pool unknown to the cluster (no ActPool), not imported', pool)
+    continue
    # Import only from the disks that are members of this pool (etcd), so a stale leg that kept the pool's name but was
    # detached while its node was away (old guid, free disk now) can never be imported as the pool and then be re-attached over.
    cmdline= '/usr/sbin/zpool import '+poolid
