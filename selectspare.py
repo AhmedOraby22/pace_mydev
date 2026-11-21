@@ -570,7 +570,7 @@ def spare2(*args):
       print('rmdisk:',rmdiskname)
       print('raidname:',raidname)
       print('adiskname:',adiskname)
-      other = foreignpool(adiskname, poolname)
+      other = foreignpool(adiskname, poolname, leaderip)
       if other:
          # test 674: the disk holds a label of another pool (exported or owned by a node that is down): never take it
          print('disk', adiskname, 'belongs to pool', other, ': not a spare for', poolname)

@@ -30,23 +30,26 @@ def labelinfo(disk):
             pairs.add((name, guid))
     return pairs
 
-def liveguids():
-    """pool guids that are alive: imported on this node, or recorded as ActPool/<pool> in the cluster etcd"""
+def liveguids(leaderip):
+    """pool guids that are alive: imported on this node, or recorded as ActPool/<pool> in the cluster etcd at leaderip.
+    None when the cluster etcd cannot be read: the caller then treats every label as a live pool (the safe side)."""
     guids = set()
     try:
         out = subprocess.run(['/sbin/zpool', 'get', '-H', '-o', 'value', 'guid'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20).stdout.decode()
         guids.update(x.strip() for x in out.split() if x.strip())
     except Exception:
         pass
+    if not leaderip or str(leaderip) in ('_1', '-1'):
+        return None
     try:
-        from etcdgetlocalpy import etcdget as getlocal
         from etcdgetpy import etcdget as get
-        leaderip = str(getlocal('leaderip')[0])
-        for k in get(leaderip, 'ActPool', '--prefix'):
-            if isinstance(k, (tuple, list)) and len(k) > 1:
-                guids.add(str(k[1]).strip())
+        act = [ k for k in get(leaderip, 'ActPool', '--prefix') if isinstance(k, (tuple, list)) and len(k) > 1 ]
     except Exception:
-        pass
+        return None
+    if not act:
+        return None
+    for k in act:
+        guids.add(str(k[1]).strip())
     return guids
 
 def labelpools(disk):
@@ -66,13 +69,15 @@ def labelpools(disk):
                 names.add(line.split(':', 1)[1].strip().strip("'"))
     return names
 
-def foreignpool(disk, poolname):
+def foreignpool(disk, poolname, leaderip=None):
     """The name of another LIVE pool that disk belongs to, or '' when it is free, already this pool's, or only carries a dead
     label (test 680: a stale label of an old copy of pdhcp588910935, other pool_guid, blocked every replace and the pool
     stayed degraded).  A label counts when its pool_guid is imported here or recorded in ActPool/ of the cluster."""
     pairs = [ (n, g) for n, g in labelinfo(disk) if n and n != poolname ]
     if not pairs:
         return ''
-    live = liveguids()
+    live = liveguids(leaderip)
+    if live is None:
+        return sorted(n for n, g in pairs)[0]       # the cluster's pools cannot be read: every label counts
     others = sorted(n for n, g in pairs if not g or g in live)
     return others[0] if others else ''

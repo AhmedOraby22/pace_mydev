@@ -557,7 +557,7 @@ def spare2(*args):
    print(rmdisk)
    print('hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh')
    if rmdisk in cpoolinfo:
-       other = foreignpool(adiskname, poolname)
+       other = foreignpool(adiskname, poolname, leaderip)
        if other:
            # test 674: a disk with a label of another pool is never a spare
            print('disk', adiskname, 'belongs to pool', other, ': not a spare for', poolname)
