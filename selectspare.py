@@ -671,6 +671,14 @@ def spare2(*args):
         if any('replacing' in str(d['name']) for d in raid['disklist']):
             print('not optimizing raid:',raid['name'],'a replace is still in progress')
             continue
+        # test 10 step 6: right after a replace the new disk is listed with changeop 'NA' (not ONLINE) for a while; the window
+        # below takes only ONLINE members, so the optimizer did not see it, found the raid "not optimized" and asked for the
+        # opposite replace -> an endless replace flip-flop between two free disks.  Rebalance only a settled raid: every
+        # present disk ONLINE (missing ones, dm-*, are still replaced as before).
+        unsettled = [ d['name'] for d in raid['disklist'] if 'dm-' not in str(d['name']) and d['changeop'] not in ['ONLINE'] ]
+        if len(unsettled) > 0:
+            print('not optimizing raid:',raid['name'],'disks not settled yet:',unsettled)
+            continue
         if (raid['pool'], raid['name']) in held:
             print('not optimizing raid:',raid['name'],'it has a disk the admin took offline')
             continue
