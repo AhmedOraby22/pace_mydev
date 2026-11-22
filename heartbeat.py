@@ -48,6 +48,10 @@ readyseen = None
 # failure of the current run of failures.
 HOLDOFF = 7   # test 680: rounds on a dead peer take ~2.5 s now: lost on the ~4th failed round (~7.5 s), still more than the ~6 s bond blip of test 646
 failsince = dict()
+# test 683: an nmap started at boot (bond0 still coming up) hung in poll() for over an hour; check_output had no timeout,
+# so the heartbeat loop never ran a round and the follower never took over when the leader stopped.  Every nmap/ping
+# call has a timeout now (check_output kills the child when it expires).
+NMAPSECS = 10
 
 def reachable(ip):
  # nmap on the etcd port (host discovery as root) and, if that does not say up, one ping
@@ -147,7 +151,10 @@ def hostlost(host, hostip):
                         sleep(1)
                         print('chceking new leader')
                         cmdline='nmap --max-rtt-timeout 500ms -n -p '+port+' '+leaderip 
-                        result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+                        try:
+                            result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT,timeout=NMAPSECS).decode('utf-8')
+                        except Exception:
+                            result=''
                         if 'Host is up' in result or 'open' in result:
                             result = (host,'ok')
                         else:
@@ -228,7 +235,7 @@ def heartbeat(*args):
                 if phost == myhost or phost in known_hosts:
                     continue
                 cmdline='nmap --max-rtt-timeout 500ms -n -p '+port+' '+pip
-                res=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+                res=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT,timeout=NMAPSECS).decode('utf-8')
                 if 'Host is up' in res or 'open' in res:
                     hostfound(phost, pip)
         except Exception:
@@ -249,7 +256,7 @@ def heartbeat(*args):
                 res = ''
                 try:
                     cmdline='nmap --max-rtt-timeout 500ms --host-timeout 1500ms -n -p '+port+' '+hostip   # test 680: a dead peer answers nothing; nmap's own waits made a round ~5 s
-                    res=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
+                    res=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT,timeout=NMAPSECS).decode('utf-8')
                 except:
                     result=(host,'doubt')
                 if 'Host is up' in res or 'open' in res:
@@ -261,8 +268,8 @@ def heartbeat(*args):
                     cmdline='ping -w 1 '+hostip 
                     print(cmdline)
                     try:
-                        subprocess.check_output(cmdline.split())
-                    except subprocess.CalledProcessError as e:
+                        subprocess.check_output(cmdline.split(),timeout=5)
+                    except Exception:
                         result=(host,'lost')
                 if 'ok' in str(result):
                     break
