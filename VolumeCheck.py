@@ -173,18 +173,27 @@ def repairbyaddress(dirtyset, leftof, cmdof):
  for ipaddr in byaddress:
    ress = byaddress[ipaddr]
    print('update',ipaddr,[ x.split('/')[1] for x in ress ])
-   cmdline = '/TopStor/undockerthis.sh '+ipaddr
-   result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
-   for res in ress:
-     left = leftof(res.split('/'))
-     put(leaderip, left,res)
-     print('tosync this',leaderip, left,res)
-   dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
-   cmdline = cmdof(ress[0].split('/'))
-   print('cifs.py: '+cmdline)
-   result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
-   print('cifs result',result)
-   put(etcdip,'dirty/volume','0')
+   # test 16 step 9: the create (VolumeActivateCIFSdom -> cifs.py) may be building this address right now; a second build in
+   # parallel lost the share config. A locked address is skipped (the next pass looks again), as nfsnew does.
+   lockf = addrlock(ipaddr)
+   if lockf is None:
+     print('address',ipaddr,'is being built by another job, skipped')
+     continue
+   try:
+     cmdline = '/TopStor/undockerthis.sh '+ipaddr
+     result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE).stdout.decode('utf-8')
+     for res in ress:
+       left = leftof(res.split('/'))
+       put(leaderip, left,res)
+       print('tosync this',leaderip, left,res)
+     dosync('sync/volumes/_'+myhost+'/request','volumes_'+str(stamp()))
+     cmdline = cmdof(ress[0].split('/'))
+     print('cifs.py: '+cmdline)
+     result = subprocess.run(cmdline.split(),stdout=subprocess.PIPE, env=dict(os.environ, SHAREADDR_LOCK=ipaddr)).stdout.decode('utf-8')
+     print('cifs result',result)
+     put(etcdip,'dirty/volume','0')
+   finally:
+     lockf.close()
  return len(byaddress) > 0
 
 def cifs( etcds, replis, dockers):
