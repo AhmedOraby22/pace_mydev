@@ -79,5 +79,22 @@ def foreignpool(disk, poolname, leaderip=None):
     live = liveguids(leaderip)
     if live is None:
         return sorted(n for n, g in pairs)[0]       # the cluster's pools cannot be read: every label counts
-    others = sorted(n for n, g in pairs if not g or g in live)
+    # test 14 step 13: a pool the cluster still lists (pools/ or poolnxt/) but whose ActPool/ key is missing here is NOT dead:
+    # its ActPool never reached this node (created while it was down).  Only a label whose pool name HAS an ActPool entry
+    # with another guid is a stale leg (test 680).
+    actnames, listed = knownpools(leaderip)
+    others = sorted(n for n, g in pairs if not g or g in live or (n not in actnames and n in listed))
     return others[0] if others else ''
+
+def knownpools(leaderip):
+    """(names with an ActPool/ entry, names listed in pools/ or poolnxt/) in the cluster etcd at leaderip."""
+    actnames, listed = set(), set()
+    try:
+        from etcdgetpy import etcdget as get
+        for key, names in (('ActPool', actnames), ('pools', listed), ('poolnxt', listed)):
+            for k in get(leaderip, key, '--prefix'):
+                if isinstance(k, (tuple, list)) and len(k) > 1 and str(k[0]).startswith(key+'/'):
+                    names.add(str(k[0]).split('/', 1)[1])
+    except Exception:
+        pass
+    return actnames, listed

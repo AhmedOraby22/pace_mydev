@@ -269,6 +269,17 @@ def syncall(leader,leaderip,myhost, myhostip,pullsync='pullavail'):
  for syncinfo in myinitials:
    doinitsync(leader,leaderip,myhost,myhostip, syncinfo,pullsync)
 
+ # test 14 step 13: ActPool has no initial sync, yet its pending Add requests are marked done below without being applied.
+ # A pool created while this node was down therefore never got ActPool/<pool> here; when this node took over, the import
+ # was refused ("no ActPool") and diskguard saw the pool's surviving disk as free and gave it to another pool (data lost).
+ # The leader's ActPool keys are the truth: copy them, as an initial sync would.
+ if myhost != leader and 'pullsync' not in pullsync:
+   leaderact = get(leaderip, 'ActPool', '--prefix')
+   if leaderact and '_1' not in str(leaderact):
+     for item in leaderact:
+       if isinstance(item, (tuple, list)) and len(item) > 1 and str(item[0]).startswith('ActPool/'):
+         put(myhostip, item[0], item[1])
+
  for done in otherrequests:
       put(leaderip,done[0]+'/'+myhost,done[1])
       synckeys(leaderip,myhostip, done[0], done[0]) 
