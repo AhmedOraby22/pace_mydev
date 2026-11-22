@@ -668,6 +668,9 @@ def spare2(*args):
         faultyreplaceflag = solvefaultyreplace(raid)
         if faultyreplaceflag > 0:
             continue
+        if any('replacing' in str(d['name']) for d in raid['disklist']):
+            print('not optimizing raid:',raid['name'],'a replace is still in progress')
+            continue
         if (raid['pool'], raid['name']) in held:
             print('not optimizing raid:',raid['name'],'it has a disk the admin took offline')
             continue
