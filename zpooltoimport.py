@@ -204,6 +204,23 @@ def memberimportdir(pool, disks):
   return ''
  return impdir
 
+def mirroractpool():
+ """test 14 step 13: a follower keeps the leader's ActPool/<pool> keys in its own etcd.  ActPool has no initial sync and a
+ node that was down when a pool was created never got its key (its pending Add request is marked done on the way back);
+ when that node took over, the import was refused ("no ActPool") and the pool's surviving disk looked free.  Only adds or
+ updates keys: a pool the leader no longer lists is removed by the ActPool/pools Del requests, as before."""
+ try:
+  leaderact = get(leaderip, 'ActPool', '--prefix')
+  if not leaderact or '_1' in str(leaderact):
+   return
+  mine = { k: v for k, v in [ x for x in get(etcdip, 'ActPool', '--prefix') if isinstance(x, (tuple, list)) and len(x) > 1 ] }
+  for item in leaderact:
+   if isinstance(item, (tuple, list)) and len(item) > 1 and str(item[0]).startswith('ActPool/') and mine.get(item[0]) != item[1]:
+    print('ActPool mirrored from the leader:', item[0], item[1])
+    put(etcdip, item[0], item[1])
+ except Exception as e:
+  print('mirroractpool failed:', e)
+
 def zpooltoimport(*args):
  global leader, leaderip, myhost, myhostip, etcdip
  if args[0]=='init':
@@ -219,6 +236,8 @@ def zpooltoimport(*args):
  nextpools=get(leaderip, 'poolnxt', '--prefix') 
  if 'not reachable' in str(nextpools):
         return
+ if myhost != leader and etcdip != leaderip:
+    mirroractpool()
  needtoimport=[ x for x in nextpools if myhost in str(x)] 
  pools = [v for k,v in getall(leaderip)['pools'].items()]
  mypools = [v  for v in pools if v['host'] == myhost ]
