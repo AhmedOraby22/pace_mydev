@@ -221,6 +221,37 @@ def mirroractpool():
  except Exception as e:
   print('mirroractpool failed:', e)
 
+_cversion_checked = 0
+def keepcversion():
+ """test 608 (QX-009) step 7: cversion/<host> lived only in the leader's etcd (its sync was removed in b56094f), so a
+ member that took over served versions from the time it was last leader, a returning node read that stale key and tried
+ to pull an older branch, and a node's own key put (one try, 2 s, during the network restart) could be lost for good.
+ Every node, once a minute: re-publish its own cversion/<me> on the leader when it differs from its git head, and a
+ member mirrors the leader's cversion/* keys into its own etcd (key copy only: no pull is ever started from here)."""
+ global _cversion_checked
+ if stamp() - _cversion_checked < 60:
+  return
+ _cversion_checked = stamp()
+ try:
+  branch = subprocess.run(['git','-C','/TopStor','rev-parse','--abbrev-ref','HEAD'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20).stdout.decode().strip()
+  show = subprocess.run(['git','-C','/TopStor','show','--abbrev-commit','--no-patch'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20).stdout.decode()
+  commit = [l.split()[1] for l in show.split(chr(10)) if l.startswith('commit ')][:1]
+  if branch and commit:
+   mine = branch+'-'+commit[0]
+   current = get(leaderip, 'cversion/'+myhost)
+   if 'not reachable' not in str(current) and (not current or str(current[0]) != mine):
+    print('cversion re-published:', myhost, mine)
+    put(leaderip, 'cversion/'+myhost, mine)
+  if myhost != leader and etcdip != leaderip:
+   theirs = get(leaderip, 'cversion', '--prefix')
+   if theirs and '_1' not in str(theirs) and 'not reachable' not in str(theirs):
+    local = { k: v for k, v in [ x for x in get(etcdip, 'cversion', '--prefix') if isinstance(x, (tuple, list)) and len(x) > 1 ] }
+    for item in theirs:
+     if isinstance(item, (tuple, list)) and len(item) > 1 and str(item[0]).startswith('cversion/') and local.get(item[0]) != item[1]:
+      put(etcdip, item[0], item[1])
+ except Exception as e:
+  print('keepcversion failed:', e)
+
 def zpooltoimport(*args):
  global leader, leaderip, myhost, myhostip, etcdip
  if args[0]=='init':
@@ -238,6 +269,7 @@ def zpooltoimport(*args):
         return
  if myhost != leader and etcdip != leaderip:
     mirroractpool()
+ keepcversion()
  needtoimport=[ x for x in nextpools if myhost in str(x)] 
  pools = [v for k,v in getall(leaderip)['pools'].items()]
  mypools = [v  for v in pools if v['host'] == myhost ]
