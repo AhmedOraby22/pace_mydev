@@ -162,6 +162,15 @@ def hostlost(host, hostip):
                 
                 else:
                     dels(leaderip, 'pools',host)
+                    # QX-006 step 7: a lost member made no bell or log event at all (only the lost-leader path, leaderlost.sh,
+                    # sends Partst02).  The leader now sends the same "Node : <host> is down" warning, once per loss (the
+                    # host leaves ready/ just below, so this branch does not run again for it).
+                    if myhost == leader:
+                        try:
+                            subprocess.run(['docker','exec','etcdclient','/TopStor/logmsg.py','Partst02','warning','system',host],
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+                        except Exception:
+                            pass
                 dels(etcd, 'cpuperf/'+host)
                 cmdline='/pace/hostlost.sh '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+host
                 result=subprocess.check_output(cmdline.split(),stderr=subprocess.STDOUT).decode('utf-8')
